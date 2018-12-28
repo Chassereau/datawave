@@ -87,7 +87,7 @@ public class InMemoryInstance implements Instance {
         }
         this.instanceName = instanceName;
     }
-    
+
     @Override
     public String getRootTabletLocation() {
         return genericAddress;

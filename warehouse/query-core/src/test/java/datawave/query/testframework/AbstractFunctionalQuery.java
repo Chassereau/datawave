@@ -139,6 +139,9 @@ public abstract class AbstractFunctionalQuery implements QueryLogicTestHarness.T
         this.logic.setQueryPlanner(new DefaultQueryPlanner());
         this.logic.setResponseObjectFactory(new DefaultResponseObjectFactory());
         
+        this.logic.setCollectTimingDetails(true);
+        this.logic.setLogTimingDetails(true);
+        
         // count logic
         countLogic.setIncludeDataTypeAsField(true);
         countLogic.setFullTableScanEnabled(false);

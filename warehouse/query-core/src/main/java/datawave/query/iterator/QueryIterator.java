@@ -175,7 +175,8 @@ public class QueryIterator extends QueryOptions implements SortedKeyValueIterato
     protected TypeMetadata typeMetadataWithNonIndexed = null;
     protected TypeMetadata typeMetadata = null;
     
-    public QueryIterator() {}
+    public QueryIterator() {
+    }
     
     public QueryIterator(QueryIterator other, IteratorEnvironment env) {
         // Need to copy all members instantiated/modified during init()

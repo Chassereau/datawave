@@ -58,7 +58,8 @@ public class TupleToRange implements Function<Tuple2<String,IndexInfo>,Iterator<
                 if (config.isTldQuery()) {
                     // so we need an end key that includes all of the children, and allows for the
                     // final document (@see FinalDocumentTrackingIterator) but does not allow for the next doc
-                    end = new Key(tuple.first(), uid.getUid() + MAX_UNICODE_STRING + NULL_BYTE_STRING);
+                    // end = new Key(tuple.first(), uid.getUid() + MAX_UNICODE_STRING + NULL_BYTE_STRING);
+                    end = new Key(tuple.first(), uid.getUid() + MAX_UNICODE_STRING);
                 }
                 
                 // Technically, we don't want to be inclusive of the start key,
