@@ -87,6 +87,8 @@ public class GlobalIndexTermMatchingIterator extends GlobalIndexTermMatchingFilt
         this.scanCFs = columnFamilies;
         this.scanInclusive = inclusive;
         getSource().seek(range, columnFamilies, inclusive);
+        // TODO: If uniqueTermsOnly && this is a non-inclusive start key, then advance iff the topkey is the same row and cf as the start key
+
         findTopEntry();
     }
     

@@ -29,6 +29,7 @@ import org.apache.accumulo.core.client.sample.SamplerConfiguration;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
 import org.apache.accumulo.core.data.Key;
+import org.apache.accumulo.core.data.PartialKey;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.security.Authorizations;
@@ -90,19 +91,14 @@ public class RebuildingScannerTestHelper {
         
         @Override
         public Map.Entry<Key,Value> next() {
-            Map.Entry<Key, Value> next;
-            try {
-                if (lastKey != null && teardown.teardown()) {
-                    delegate = scanner.rebuild(lastKey);
-                    lastKey = null;
+            Map.Entry<Key,Value> next = delegate.next();
+            if (lastKey != null && teardown.teardown()) {
+                delegate = scanner.rebuild(lastKey);
+                lastKey = null;
+                Map.Entry<Key,Value> rebuiltNext = delegate.next();
+                if (!next.getKey().equals(rebuiltNext.getKey(), PartialKey.ROW_COLFAM_COLQUAL_COLVIS)) {
+                    throw new RuntimeException("Unexpected change in top key: " + rebuiltNext + " vs " + next);
                 }
-                next = delegate.next();
-            } catch (Throwable t) {
-                System.out.println("break here");
-                throw t;
-            }
-            if (next == null) {
-                System.out.println("break here");
             }
             lastKey = next.getKey();
             return next;
@@ -127,7 +123,49 @@ public class RebuildingScannerTestHelper {
             return (random.nextBoolean());
         }
     }
-    
+
+    public static class EveryOtherTeardown implements TeardownListener {
+        private transient boolean teardown = false;
+
+        @Override
+        public boolean teardown() {
+            teardown = !teardown;
+            return (teardown);
+        }
+    }
+
+    public static class EveryNthTeardown implements TeardownListener {
+        private final int n;
+        private transient int count = 0;
+
+        public EveryNthTeardown(int n) {
+            this.n = n;
+        }
+
+        @Override
+        public boolean teardown() {
+            count++;
+            if (count == n) {
+                count = 0;
+            }
+            return (count == 0);
+        }
+    }
+
+    public static class AlwaysTeardown implements TeardownListener {
+        @Override
+        public boolean teardown() {
+            return true;
+        }
+    }
+
+    public static class NeverTeardown implements TeardownListener {
+        @Override
+        public boolean teardown() {
+            return false;
+        }
+    }
+
     public static class RebuildingScanner extends DelegatingScannerBase implements Scanner {
         public RebuildingScanner(InMemoryScanner delegate) {
             super(delegate);
@@ -135,7 +173,7 @@ public class RebuildingScannerTestHelper {
         
         @Override
         public Iterator<Map.Entry<Key,Value>> iterator() {
-            return new RebuildingIterator(delegate.iterator(), ((InMemoryScanner) delegate).clone(), new RandomTeardown());
+            return new RebuildingIterator(delegate.iterator(), ((InMemoryScanner) delegate).clone(), new EveryOtherTeardown());
         }
         
         @Override
@@ -196,7 +234,7 @@ public class RebuildingScannerTestHelper {
         
         @Override
         public Iterator<Map.Entry<Key,Value>> iterator() {
-            return new RebuildingIterator(delegate.iterator(), ((InMemoryBatchScanner) delegate).clone(), new RandomTeardown());
+            return new RebuildingIterator(delegate.iterator(), ((InMemoryBatchScanner) delegate).clone(), new EveryOtherTeardown());
         }
         
         @Override
