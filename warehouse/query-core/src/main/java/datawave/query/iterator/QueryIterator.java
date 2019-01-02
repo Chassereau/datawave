@@ -175,8 +175,7 @@ public class QueryIterator extends QueryOptions implements SortedKeyValueIterato
     protected TypeMetadata typeMetadataWithNonIndexed = null;
     protected TypeMetadata typeMetadata = null;
     
-    public QueryIterator() {
-    }
+    public QueryIterator() {}
     
     public QueryIterator(QueryIterator other, IteratorEnvironment env) {
         // Need to copy all members instantiated/modified during init()
@@ -301,6 +300,10 @@ public class QueryIterator extends QueryOptions implements SortedKeyValueIterato
                 log.debug("Seek range: " + range + " " + query);
             }
             this.range = range;
+            
+            // preserve the original range for use with the Final Document tracking iterator because it is placed after the ResultCountingIterator
+            // so the FinalDocumentTracking iterator needs the start key with the count already appended
+            Range originalRange = range;
             
             // determine whether this is a teardown/rebuild range
             long resultCount = 0;
@@ -430,10 +433,9 @@ public class QueryIterator extends QueryOptions implements SortedKeyValueIterato
             
             // only add the final document tracking iterator which sends stats back to the client if collectTimingDetails is true
             if (collectTimingDetails) {
-                Range r = (documentRange == null) ? this.range : documentRange;
                 // if there is no document to return, then add an empty document
                 // to store the timing metadata
-                this.serializedDocuments = new FinalDocumentTrackingIterator(querySpanCollector, trackingSpan, r, this.serializedDocuments,
+                this.serializedDocuments = new FinalDocumentTrackingIterator(querySpanCollector, trackingSpan, originalRange, this.serializedDocuments,
                                 this.getReturnType(), this.isReducedResponse(), this.isCompressResults(), this.yield);
             }
             if (log.isTraceEnabled()) {

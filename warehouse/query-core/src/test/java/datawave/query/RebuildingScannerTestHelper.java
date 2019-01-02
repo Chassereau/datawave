@@ -51,21 +51,23 @@ import java.util.function.Consumer;
  * iterator that will force the stack to be torn down.
  */
 public class RebuildingScannerTestHelper {
+
+    private static final Class<? extends TeardownListener> TEARDOWN_LISTENER_CLASS = NeverTeardown.class;
     
-    public static Connector getConnector(InMemoryInstance i, String user, byte[] pass) throws AccumuloException, AccumuloSecurityException {
-        return new RebuildingConnector((InMemoryConnector) (i.getConnector(user, new PasswordToken(pass))));
+    public static Connector getConnector(InMemoryInstance i, String user, byte[] pass, boolean testStrictTeardown) throws AccumuloException, AccumuloSecurityException {
+        return new RebuildingConnector((InMemoryConnector) (i.getConnector(user, new PasswordToken(pass))), testStrictTeardown);
     }
     
-    public static Connector getConnector(InMemoryInstance i, String user, ByteBuffer pass) throws AccumuloException, AccumuloSecurityException {
-        return new RebuildingConnector((InMemoryConnector) (i.getConnector(user, ByteBufferUtil.toBytes(pass))));
+    public static Connector getConnector(InMemoryInstance i, String user, ByteBuffer pass, boolean testStrictTeardown) throws AccumuloException, AccumuloSecurityException {
+        return new RebuildingConnector((InMemoryConnector) (i.getConnector(user, ByteBufferUtil.toBytes(pass))), testStrictTeardown);
     }
     
-    public static Connector getConnector(InMemoryInstance i, String user, CharSequence pass) throws AccumuloException, AccumuloSecurityException {
-        return new RebuildingConnector((InMemoryConnector) (i.getConnector(user, TextUtil.getBytes(new Text(pass.toString())))));
+    public static Connector getConnector(InMemoryInstance i, String user, CharSequence pass, boolean testStrictTeardown) throws AccumuloException, AccumuloSecurityException {
+        return new RebuildingConnector((InMemoryConnector) (i.getConnector(user, TextUtil.getBytes(new Text(pass.toString())))), testStrictTeardown);
     }
     
-    public static Connector getConnector(InMemoryInstance i, String principal, AuthenticationToken token) throws AccumuloException, AccumuloSecurityException {
-        return new RebuildingConnector((InMemoryConnector) (i.getConnector(principal, token)));
+    public static Connector getConnector(InMemoryInstance i, String principal, AuthenticationToken token, boolean testStrictTeardown) throws AccumuloException, AccumuloSecurityException {
+        return new RebuildingConnector((InMemoryConnector) (i.getConnector(principal, token)), testStrictTeardown);
     }
     
     public interface TeardownListener {
@@ -76,32 +78,51 @@ public class RebuildingScannerTestHelper {
         private Iterator<Map.Entry<Key,Value>> delegate;
         private final ScannerRebuilder scanner;
         private final TeardownListener teardown;
-        private Key lastKey;
+        private Map.Entry<Key, Value> next = null;
+        private Map.Entry<Key, Value> lastKey = null;
+        private final boolean testStrictTeardown;
         
-        public RebuildingIterator(Iterator<Map.Entry<Key,Value>> delegate, ScannerRebuilder scanner, TeardownListener teardown) {
+        public RebuildingIterator(Iterator<Map.Entry<Key,Value>> delegate, ScannerRebuilder scanner, TeardownListener teardown, boolean testStrictTeardown) {
             this.delegate = delegate;
             this.scanner = scanner;
             this.teardown = teardown;
+            this.testStrictTeardown = testStrictTeardown;
+            findNext();
         }
         
         @Override
         public boolean hasNext() {
-            return delegate.hasNext();
+            return next != null;
         }
-        
+
         @Override
         public Map.Entry<Key,Value> next() {
-            Map.Entry<Key,Value> next = delegate.next();
+            lastKey = next;
+            findNext();
+            return lastKey;
+        }
+
+        private void findNext() {
             if (lastKey != null && teardown.teardown()) {
-                delegate = scanner.rebuild(lastKey);
-                lastKey = null;
-                Map.Entry<Key,Value> rebuiltNext = delegate.next();
-                if (!next.getKey().equals(rebuiltNext.getKey(), PartialKey.ROW_COLFAM_COLQUAL_COLVIS)) {
-                    throw new RuntimeException("Unexpected change in top key: " + rebuiltNext + " vs " + next);
+                boolean hasNext = delegate.hasNext();
+                Map.Entry<Key,Value> next = (hasNext ? delegate.next() : null);
+
+                delegate = scanner.rebuild(lastKey.getKey());
+
+                boolean rebuildHasNext = delegate.hasNext();
+                if (testStrictTeardown && (hasNext != rebuildHasNext)) {
+                    throw new RuntimeException("Unexpected change in top key: hasNext is no longer " + hasNext);
                 }
+
+                Map.Entry<Key,Value> rebuildNext = (rebuildHasNext ? delegate.next() : null);
+                if (testStrictTeardown && !next.getKey().equals(rebuildNext.getKey(), PartialKey.ROW_COLFAM_COLQUAL_COLVIS)) {
+                    throw new RuntimeException("Unexpected change in top key: hasNext is no longer " + hasNext);
+                }
+
+                this.next = rebuildNext;
+            } else {
+                this.next = (delegate.hasNext() ? delegate.next() : null);
             }
-            lastKey = next.getKey();
-            return next;
         }
         
         @Override
@@ -123,25 +144,25 @@ public class RebuildingScannerTestHelper {
             return (random.nextBoolean());
         }
     }
-
+    
     public static class EveryOtherTeardown implements TeardownListener {
         private transient boolean teardown = false;
-
+        
         @Override
         public boolean teardown() {
             teardown = !teardown;
             return (teardown);
         }
     }
-
+    
     public static class EveryNthTeardown implements TeardownListener {
         private final int n;
         private transient int count = 0;
-
+        
         public EveryNthTeardown(int n) {
             this.n = n;
         }
-
+        
         @Override
         public boolean teardown() {
             count++;
@@ -151,29 +172,36 @@ public class RebuildingScannerTestHelper {
             return (count == 0);
         }
     }
-
+    
     public static class AlwaysTeardown implements TeardownListener {
         @Override
         public boolean teardown() {
             return true;
         }
     }
-
+    
     public static class NeverTeardown implements TeardownListener {
         @Override
         public boolean teardown() {
             return false;
         }
     }
-
+    
     public static class RebuildingScanner extends DelegatingScannerBase implements Scanner {
-        public RebuildingScanner(InMemoryScanner delegate) {
+        private final boolean testStrictTeardown;
+
+        public RebuildingScanner(InMemoryScanner delegate, boolean testStrictTeardown) {
             super(delegate);
+            this.testStrictTeardown = testStrictTeardown;
         }
         
         @Override
         public Iterator<Map.Entry<Key,Value>> iterator() {
-            return new RebuildingIterator(delegate.iterator(), ((InMemoryScanner) delegate).clone(), new EveryOtherTeardown());
+            try {
+                return new RebuildingIterator(delegate.iterator(), ((InMemoryScanner) delegate).clone(), TEARDOWN_LISTENER_CLASS.newInstance(), testStrictTeardown);
+            } catch (Exception e) {
+                throw new RuntimeException("Misconfigured teardown listener class most likely", e);
+            }
         }
         
         @Override
@@ -228,13 +256,20 @@ public class RebuildingScannerTestHelper {
     }
     
     public static class RebuildingBatchScanner extends DelegatingScannerBase implements BatchScanner {
-        public RebuildingBatchScanner(InMemoryBatchScanner delegate) {
+        private final boolean testStrictTeardown;
+
+        public RebuildingBatchScanner(InMemoryBatchScanner delegate, boolean testStrictTeardown) {
             super(delegate);
+            this.testStrictTeardown = testStrictTeardown;
         }
         
         @Override
         public Iterator<Map.Entry<Key,Value>> iterator() {
-            return new RebuildingIterator(delegate.iterator(), ((InMemoryBatchScanner) delegate).clone(), new EveryOtherTeardown());
+            try {
+                return new RebuildingIterator(delegate.iterator(), ((InMemoryBatchScanner) delegate).clone(), TEARDOWN_LISTENER_CLASS.newInstance(), testStrictTeardown);
+            } catch (Exception e) {
+                throw new RuntimeException("Misconfigured teardown listener class most likely", e);
+            }
         }
         
         @Override
@@ -245,14 +280,16 @@ public class RebuildingScannerTestHelper {
     
     public static class RebuildingConnector extends Connector {
         private final InMemoryConnector delegate;
+        private final boolean testStrictTeardown;
         
-        public RebuildingConnector(InMemoryConnector delegate) {
+        public RebuildingConnector(InMemoryConnector delegate, boolean testStrictTeardown) {
             this.delegate = delegate;
+            this.testStrictTeardown = testStrictTeardown;
         }
         
         @Override
         public BatchScanner createBatchScanner(String s, Authorizations authorizations, int i) throws TableNotFoundException {
-            return new RebuildingBatchScanner((InMemoryBatchScanner) (delegate.createBatchScanner(s, authorizations, i)));
+            return new RebuildingBatchScanner((InMemoryBatchScanner) (delegate.createBatchScanner(s, authorizations, i)), testStrictTeardown);
         }
         
         @Override
@@ -291,7 +328,7 @@ public class RebuildingScannerTestHelper {
         
         @Override
         public Scanner createScanner(String s, Authorizations authorizations) throws TableNotFoundException {
-            return new RebuildingScanner((InMemoryScanner) (delegate.createScanner(s, authorizations)));
+            return new RebuildingScanner((InMemoryScanner) (delegate.createScanner(s, authorizations)), testStrictTeardown);
         }
         
         @Override
